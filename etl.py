@@ -1,7 +1,8 @@
 import configparser
 import os
+import logging
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import udf, col, split, explode, count, size, \
+from pyspark.sql.functions import udf, col, split, explode, count, size, when, isnan, \
     reverse, input_file_name, struct, lit, array, monotonically_increasing_id
 from pyspark.sql.types import DoubleType, IntegerType
 
@@ -153,11 +154,23 @@ def process_indicator_data(spark, input_data, output_data):
     #### -------------- FACT SCORE --------------- ####
 
 
-def dw_files_head(spark, output_data):
-    spark.read.parquet(output_data + 'dim_indicator.parquet').show()
-    spark.read.parquet(output_data + 'dim_country.parquet').show()
-    spark.read.parquet(output_data + 'dim_time.parquet').show()
-    spark.read.parquet(output_data + 'fact_score.parquet').show()
+def dw_check_data_quality(spark, output_data,tables):
+    #spark.read.parquet(output_data + 'dim_indicator.parquet').show()
+    #spark.read.parquet(output_data + 'dim_country.parquet').show()
+    #spark.read.parquet(output_data + 'dim_time.parquet').show()
+    #spark.read.parquet(output_data + 'fact_score.parquet').show()
+
+    for table in tables:
+        check_table = spark.read.parquet(output_data + table + '.parquet')
+        number_of_rows = check_table.count()
+        if number_of_rows < 1:
+            raise ValueError(f"Data quality check failed. {table} returned no results")
+        number_of_null = check_table.select([count(when(isnan(c), c)).alias(c) for \
+            c in check_table.columns]).collect()
+        for i in range(len(check_table.columns)):
+            if number_of_null[0][i] == number_of_rows:
+                raise ValueError(f"Data quality check failed. {table} contained column with only null values")
+        logging.info(f"Data quality on table {table} check passed with {number_of_rows} records")
 
 
 def main():
@@ -170,7 +183,7 @@ def main():
     process_country_data(spark, input_data, output_data)
     process_indicator_data(spark, input_data, output_data)
 
-    dw_files_head(spark, output_data)
+    dw_check_data_quality(spark, output_data, ['dim_country', 'dim_time', 'dim_indicator', 'fact_score'])
 
 
 if __name__ == "__main__":
